@@ -3,14 +3,14 @@ export {
   FEE_WALLET,
   FEE_BPS,
   PAY_DISCRIMINATOR,
-  PAY_USDC_DISCRIMINATOR,
+  PAY_STABLE_DISCRIMINATOR,
+  REFUND_STABLE_DISCRIMINATOR,
   RECEIPT_DISCRIMINATOR,
-  USDC_MINT,
-  USDC_DECIMALS,
+  STABLE_ASSET,
 } from "./constants";
 export { deriveReceiptPda } from "./pda";
-export { buildPayInstruction, buildPayUsdcInstruction } from "./instructions";
-export { createPayTransaction, createPayUsdcTransaction } from "./transactions";
+export { buildPayInstruction, buildPayStableInstruction, buildRefundStableInstruction } from "./instructions";
+export { createPayTransaction, createPayStableTransaction, createRefundStableTransaction } from "./transactions";
 export { parseReceipt, fetchReceipt, watchReceipt } from "./receipt";
 export { uuidToBytes, bytesToUuid } from "./uuid";
 export type { Receipt, PaymentCompleted } from "./types";

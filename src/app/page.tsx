@@ -268,7 +268,7 @@ export default function LandingPage() {
                 gap: 8,
               }}
             >
-              Pay with SLIK
+              Pay with Palm SLIK
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M5 12h14M12 5l7 7-7 7"
@@ -362,13 +362,13 @@ export default function LandingPage() {
             {
               step: "01",
               title: "Merchant enters the amount",
-              desc: "Opens the SLIK terminal, types 42 PLN. The system converts to SOL at a live rate and creates a payment request.",
+              desc: "Opens the Palm SLIK terminal, types 42 PLN. The system converts to SOL at a live rate and creates a payment request.",
               color: "var(--solana-green)",
             },
             {
               step: "02",
               title: "Customer generates a code",
-              desc: "Opens the SLIK app, taps 'Generate code'. Gets a random 6-digit number - valid for 120 seconds. Tells it to the merchant verbally.",
+              desc: "Opens the Palm SLIK app, taps 'Generate code'. Gets a random 6-digit number - valid for 120 seconds. Tells it to the merchant verbally.",
               color: "var(--primary)",
             },
             {
@@ -470,7 +470,7 @@ export default function LandingPage() {
                   margin: "0 0 12px",
                 }}
               >
-                Build with SLIK
+                Build with Palm SLIK
               </h2>
               <p
                 style={{
@@ -669,7 +669,7 @@ export default function LandingPage() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <img src="/logo/logo-96.png" alt="SLIK" style={{ height: 28, opacity: 0.5 }} />
+            <img src="/logo/logo-96.png" alt="Palm SLIK" style={{ height: 28, opacity: 0.5 }} />
             <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
               Instant 6-code payments on Solana.
             </span>

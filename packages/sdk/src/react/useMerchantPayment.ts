@@ -19,8 +19,8 @@ export interface UseMerchantPaymentReturn {
   paymentId: string | null;
   amount: number | null;
   error: string | null;
-  createPayment: (amount: number, merchantWallet: string, currency?: "SOL" | "USDC") => Promise<void>;
-  linkCode: (code: string) => Promise<void>;
+  createPayment: (amount: number, merchantWallet: string, currency?: "SOL" | "USDC" | "PUSD", signature?: string) => Promise<void>;
+  linkCode: (code: string, signature?: string, merchantWallet?: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -46,13 +46,13 @@ export function useMerchantPayment(opts: {
   useEffect(() => () => cleanupRef.current?.(), []);
 
   const createPayment = useCallback(
-    async (amt: number, merchantWallet: string, currency?: "SOL" | "USDC") => {
+    async (amt: number, merchantWallet: string, currency?: "SOL" | "USDC" | "PUSD", signature?: string) => {
       setError(null);
       try {
         const res = await fetch(`${apiBaseUrl}/payments/create`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount: amt, merchantWallet, ...(currency && { currency }) }),
+          body: JSON.stringify({ amount: amt, merchantWallet, ...(currency && { currency }), signature }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -75,14 +75,14 @@ export function useMerchantPayment(opts: {
   );
 
   const linkCode = useCallback(
-    async (code: string) => {
+    async (code: string, signature?: string, merchantWallet?: string) => {
       if (!paymentId) return;
       setError(null);
       try {
         const res = await fetch(`${apiBaseUrl}/payments/link`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ paymentId, code }),
+          body: JSON.stringify({ paymentId, code, signature, merchantWallet }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));

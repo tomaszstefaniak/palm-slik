@@ -3,8 +3,8 @@ import {
   getAssociatedTokenAddressSync, 
   createAssociatedTokenAccountInstruction 
 } from "@solana/spl-token";
-import { buildPayInstruction, buildPayUsdcInstruction } from "./instructions";
-import { PROGRAM_ID, USDC_MINT, FEE_WALLET } from "./constants";
+import { buildPayInstruction, buildPayStableInstruction, buildRefundStableInstruction } from "./instructions";
+import { PROGRAM_ID, STABLE_ASSET, FEE_WALLET } from "./constants";
 
 export async function createPayTransaction(config: {
   customer: PublicKey;
@@ -45,10 +45,10 @@ export async function createPayTransaction(config: {
   return { transaction, receiptPda };
 }
 
-export async function createPayUsdcTransaction(config: {
+export async function createPayStableTransaction(config: {
   customer: PublicKey;
   merchant: PublicKey;
-  amountUsdc: number;
+  amountStable: number;
   paymentId: string;
   connection: Connection;
   programId?: PublicKey;
@@ -56,26 +56,26 @@ export async function createPayUsdcTransaction(config: {
   const {
     customer,
     merchant,
-    amountUsdc,
+    amountStable,
     paymentId,
     connection,
     programId = PROGRAM_ID,
   } = config;
 
-  const { instruction, receiptPda } = buildPayUsdcInstruction({
+  const { instruction, receiptPda } = buildPayStableInstruction({
     customer,
     merchant,
-    amountUsdc,
+    amountStable,
     paymentId,
     programId,
   });
 
-  const merchantUsdc = getAssociatedTokenAddressSync(USDC_MINT, merchant);
-  const feeUsdc = getAssociatedTokenAddressSync(USDC_MINT, FEE_WALLET);
+  const merchantStable = getAssociatedTokenAddressSync(STABLE_ASSET.mint, merchant);
+  const feeStable = getAssociatedTokenAddressSync(STABLE_ASSET.mint, FEE_WALLET);
 
   const [merchantAccount, feeAccount] = await connection.getMultipleAccountsInfo([
-    merchantUsdc,
-    feeUsdc,
+    merchantStable,
+    feeStable,
   ]);
 
   const { blockhash, lastValidBlockHeight } =
@@ -91,9 +91,9 @@ export async function createPayUsdcTransaction(config: {
     transaction.add(
       createAssociatedTokenAccountInstruction(
         customer,
-        merchantUsdc,
+        merchantStable,
         merchant,
-        USDC_MINT
+        STABLE_ASSET.mint
       )
     );
   }
@@ -102,9 +102,64 @@ export async function createPayUsdcTransaction(config: {
     transaction.add(
       createAssociatedTokenAccountInstruction(
         customer,
-        feeUsdc,
+        feeStable,
         FEE_WALLET,
-        USDC_MINT
+        STABLE_ASSET.mint
+      )
+    );
+  }
+
+  transaction.add(instruction);
+
+  return { transaction, receiptPda };
+}
+
+export async function createRefundStableTransaction(config: {
+  merchant: PublicKey;
+  customer: PublicKey;
+  refundAmountStable: number;
+  paymentId: string;
+  connection: Connection;
+  programId?: PublicKey;
+}): Promise<{ transaction: Transaction; receiptPda: PublicKey }> {
+  const {
+    merchant,
+    customer,
+    refundAmountStable,
+    paymentId,
+    connection,
+    programId = PROGRAM_ID,
+  } = config;
+
+  const { instruction, receiptPda } = buildRefundStableInstruction({
+    merchant,
+    customer,
+    refundAmountStable,
+    paymentId,
+    programId,
+  });
+
+  const customerStable = getAssociatedTokenAddressSync(STABLE_ASSET.mint, customer);
+  const customerAccount = await connection.getAccountInfo(customerStable);
+
+  const { blockhash, lastValidBlockHeight } =
+    await connection.getLatestBlockhash("confirmed");
+
+  const transaction = new Transaction({
+    blockhash,
+    lastValidBlockHeight,
+    feePayer: merchant, // Merchant pays the fee for refund
+  });
+
+  // If customer doesn't have an ATA (e.g. they burned it?), we could recreate it, 
+  // but let's assume they have it since they just paid us from it.
+  if (!customerAccount) {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(
+        merchant, // fee payer
+        customerStable,
+        customer,
+        STABLE_ASSET.mint
       )
     );
   }

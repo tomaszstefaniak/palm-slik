@@ -2,12 +2,12 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as SplTransfer};
 
-declare_id!("AqdVcH7aYHXtWCQbkEweCDoXGR8qMn4pdKhWScbMcyNv");
+declare_id!("CogFZCvMEXKpvg2okzEUQMLAeTRqwdC9v7JXE8CHvzNP");
 
 const FEE_WALLET: Pubkey = pubkey!("2df3JmriVkhkBqdmYT2TgDBRo8E71WAJE1SbtLQ71Fkc");
 const FEE_BPS: u64 = 20; // 0.2% = 20 basis points
-// Devnet USDC mint. Change to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v for mainnet.
-const USDC_MINT: Pubkey = pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+// Palm USD mainnet mint
+const STABLE_MINT: Pubkey = pubkey!("CZzgUBvxaMLwMhVSLgqJn3npmxoTo6nzMNQPAnwtHF3s");
 
 #[program]
 pub mod slik {
@@ -16,11 +16,9 @@ pub mod slik {
     pub fn pay(ctx: Context<Pay>, amount: u64, payment_id: [u8; 16]) -> Result<()> {
         require!(amount > 0, SlikError::ZeroAmount);
 
-        // Calculate fee (0.2% = amount * 20 / 10000)
-        let fee = amount.checked_mul(FEE_BPS).unwrap().checked_div(10000).unwrap();
-        let merchant_amount = amount.checked_sub(fee).unwrap();
+        let fee_amount = amount.checked_mul(FEE_BPS).unwrap().checked_div(10000).unwrap();
+        let net_amount = amount.checked_sub(fee_amount).unwrap();
 
-        // Transfer to merchant (amount - fee)
         system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
@@ -29,11 +27,10 @@ pub mod slik {
                     to: ctx.accounts.merchant.to_account_info(),
                 },
             ),
-            merchant_amount,
+            net_amount,
         )?;
 
-        // Transfer fee to protocol
-        if fee > 0 {
+        if fee_amount > 0 {
             system_program::transfer(
                 CpiContext::new(
                     ctx.accounts.system_program.to_account_info(),
@@ -42,15 +39,19 @@ pub mod slik {
                         to: ctx.accounts.fee_wallet.to_account_info(),
                     },
                 ),
-                fee,
+                fee_amount,
             )?;
         }
 
-        // Initialize receipt PDA (stores FULL amount, not net)
         let receipt = &mut ctx.accounts.receipt;
         receipt.customer = ctx.accounts.customer.key();
         receipt.merchant = ctx.accounts.merchant.key();
-        receipt.amount = amount; // Full amount including fee
+        receipt.mint = Pubkey::default(); // SOL has no mint
+        receipt.decimals = 9; // SOL decimals
+        receipt.amount = amount;
+        receipt.fee_amount = fee_amount;
+        receipt.net_amount = net_amount;
+        receipt.refunded_amount = 0;
         receipt.payment_id = payment_id;
         receipt.timestamp = Clock::get()?.unix_timestamp;
         receipt.bump = ctx.bumps.receipt;
@@ -59,53 +60,58 @@ pub mod slik {
             payment_id,
             customer: ctx.accounts.customer.key(),
             merchant: ctx.accounts.merchant.key(),
-            amount, // Full amount
+            mint: Pubkey::default(),
+            decimals: 9,
+            amount,
+            fee_amount,
+            net_amount,
             timestamp: receipt.timestamp,
         });
 
         Ok(())
     }
 
-    pub fn pay_usdc(ctx: Context<PayUsdc>, amount: u64, payment_id: [u8; 16]) -> Result<()> {
+    pub fn pay_stable(ctx: Context<PayStable>, amount: u64, payment_id: [u8; 16]) -> Result<()> {
         require!(amount > 0, SlikError::ZeroAmount);
 
-        // Calculate fee (0.2%)
-        let fee = amount.checked_mul(FEE_BPS).unwrap().checked_div(10000).unwrap();
-        let merchant_amount = amount.checked_sub(fee).unwrap();
+        let fee_amount = amount.checked_mul(FEE_BPS).unwrap().checked_div(10000).unwrap();
+        let net_amount = amount.checked_sub(fee_amount).unwrap();
 
-        // Transfer USDC to merchant
         token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
                 SplTransfer {
-                    from: ctx.accounts.customer_usdc.to_account_info(),
-                    to: ctx.accounts.merchant_usdc.to_account_info(),
+                    from: ctx.accounts.customer_stable.to_account_info(),
+                    to: ctx.accounts.merchant_stable.to_account_info(),
                     authority: ctx.accounts.customer.to_account_info(),
                 },
             ),
-            merchant_amount,
+            net_amount,
         )?;
 
-        // Transfer USDC fee
-        if fee > 0 {
+        if fee_amount > 0 {
             token::transfer(
                 CpiContext::new(
                     ctx.accounts.token_program.to_account_info(),
                     SplTransfer {
-                        from: ctx.accounts.customer_usdc.to_account_info(),
-                        to: ctx.accounts.fee_usdc.to_account_info(),
+                        from: ctx.accounts.customer_stable.to_account_info(),
+                        to: ctx.accounts.fee_stable.to_account_info(),
                         authority: ctx.accounts.customer.to_account_info(),
                     },
                 ),
-                fee,
+                fee_amount,
             )?;
         }
 
-        // Initialize receipt PDA (same struct as SOL payments)
         let receipt = &mut ctx.accounts.receipt;
         receipt.customer = ctx.accounts.customer.key();
         receipt.merchant = ctx.accounts.merchant.key();
+        receipt.mint = ctx.accounts.stable_mint.key();
+        receipt.decimals = ctx.accounts.stable_mint.decimals;
         receipt.amount = amount;
+        receipt.fee_amount = fee_amount;
+        receipt.net_amount = net_amount;
+        receipt.refunded_amount = 0;
         receipt.payment_id = payment_id;
         receipt.timestamp = Clock::get()?.unix_timestamp;
         receipt.bump = ctx.bumps.receipt;
@@ -114,9 +120,43 @@ pub mod slik {
             payment_id,
             customer: ctx.accounts.customer.key(),
             merchant: ctx.accounts.merchant.key(),
+            mint: ctx.accounts.stable_mint.key(),
+            decimals: ctx.accounts.stable_mint.decimals,
             amount,
+            fee_amount,
+            net_amount,
             timestamp: receipt.timestamp,
         });
+
+        Ok(())
+    }
+
+    pub fn refund_stable(ctx: Context<RefundStable>, refund_amount: u64) -> Result<()> {
+        let receipt = &mut ctx.accounts.receipt;
+        
+        // Ensure merchant is the one refunding
+        require!(ctx.accounts.merchant.key() == receipt.merchant, SlikError::UnauthorizedRefund);
+        
+        // Ensure valid refund amount
+        require!(refund_amount > 0, SlikError::ZeroAmount);
+        let max_refundable = receipt.net_amount.checked_sub(receipt.refunded_amount).unwrap();
+        require!(refund_amount <= max_refundable, SlikError::RefundExceedsAmount);
+
+        // Transfer PUSD back to customer from merchant
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                SplTransfer {
+                    from: ctx.accounts.merchant_stable.to_account_info(),
+                    to: ctx.accounts.customer_stable.to_account_info(),
+                    authority: ctx.accounts.merchant.to_account_info(),
+                },
+            ),
+            refund_amount,
+        )?;
+
+        // Update receipt
+        receipt.refunded_amount = receipt.refunded_amount.checked_add(refund_amount).unwrap();
 
         Ok(())
     }
@@ -153,7 +193,7 @@ pub struct Pay<'info> {
 
 #[derive(Accounts)]
 #[instruction(amount: u64, payment_id: [u8; 16])]
-pub struct PayUsdc<'info> {
+pub struct PayStable<'info> {
     #[account(mut)]
     pub customer: Signer<'info>,
 
@@ -170,25 +210,25 @@ pub struct PayUsdc<'info> {
 
     #[account(
         mut,
-        token::mint = usdc_mint,
+        token::mint = stable_mint,
         token::authority = customer,
     )]
-    pub customer_usdc: Account<'info, TokenAccount>,
+    pub customer_stable: Account<'info, TokenAccount>,
 
     #[account(
         mut,
-        token::mint = usdc_mint,
+        token::mint = stable_mint,
     )]
-    pub merchant_usdc: Account<'info, TokenAccount>,
+    pub merchant_stable: Account<'info, TokenAccount>,
 
     #[account(
         mut,
-        token::mint = usdc_mint,
+        token::mint = stable_mint,
     )]
-    pub fee_usdc: Account<'info, TokenAccount>,
+    pub fee_stable: Account<'info, TokenAccount>,
 
-    #[account(address = USDC_MINT @ SlikError::InvalidMint)]
-    pub usdc_mint: Account<'info, token::Mint>,
+    #[account(address = STABLE_MINT @ SlikError::InvalidMint)]
+    pub stable_mint: Account<'info, token::Mint>,
 
     #[account(
         init,
@@ -203,12 +243,52 @@ pub struct PayUsdc<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+pub struct RefundStable<'info> {
+    #[account(mut)]
+    pub merchant: Signer<'info>,
+
+    /// CHECK: Customer wallet, read from receipt
+    #[account(mut, address = receipt.customer @ SlikError::InvalidCustomer)]
+    pub customer: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        token::mint = stable_mint,
+        token::authority = merchant,
+    )]
+    pub merchant_stable: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        token::mint = stable_mint,
+    )]
+    pub customer_stable: Account<'info, TokenAccount>,
+
+    #[account(address = STABLE_MINT @ SlikError::InvalidMint)]
+    pub stable_mint: Account<'info, token::Mint>,
+
+    #[account(
+        mut,
+        seeds = [b"receipt", receipt.payment_id.as_ref()],
+        bump = receipt.bump,
+    )]
+    pub receipt: Account<'info, Receipt>,
+
+    pub token_program: Program<'info, Token>,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct Receipt {
     pub customer: Pubkey,     // 32
     pub merchant: Pubkey,     // 32
+    pub mint: Pubkey,         // 32
+    pub decimals: u8,         // 1
     pub amount: u64,          // 8
+    pub fee_amount: u64,      // 8
+    pub net_amount: u64,      // 8
+    pub refunded_amount: u64, // 8
     pub payment_id: [u8; 16], // 16
     pub timestamp: i64,       // 8
     pub bump: u8,             // 1
@@ -219,7 +299,11 @@ pub struct PaymentCompleted {
     pub payment_id: [u8; 16],
     pub customer: Pubkey,
     pub merchant: Pubkey,
+    pub mint: Pubkey,
+    pub decimals: u8,
     pub amount: u64,
+    pub fee_amount: u64,
+    pub net_amount: u64,
     pub timestamp: i64,
 }
 
@@ -229,6 +313,12 @@ pub enum SlikError {
     ZeroAmount,
     #[msg("Invalid fee wallet address")]
     InvalidFeeWallet,
-    #[msg("Invalid USDC mint address")]
+    #[msg("Invalid stablecoin mint address")]
     InvalidMint,
+    #[msg("Unauthorized refund attempt")]
+    UnauthorizedRefund,
+    #[msg("Refund amount exceeds net captured amount")]
+    RefundExceedsAmount,
+    #[msg("Invalid customer account")]
+    InvalidCustomer,
 }

@@ -78,6 +78,148 @@
           }
         }
       ]
+    },
+    {
+      "name": "pay_stable",
+      "discriminator": [
+        102,
+        255,
+        123,
+        10,
+        231,
+        87,
+        103,
+        202
+      ],
+      "accounts": [
+        {
+          "name": "customer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "merchant",
+          "writable": true
+        },
+        {
+          "name": "fee_wallet",
+          "writable": true,
+          "address": "2df3JmriVkhkBqdmYT2TgDBRo8E71WAJE1SbtLQ71Fkc"
+        },
+        {
+          "name": "customer_stable",
+          "writable": true
+        },
+        {
+          "name": "merchant_stable",
+          "writable": true
+        },
+        {
+          "name": "fee_stable",
+          "writable": true
+        },
+        {
+          "name": "stable_mint",
+          "address": "CZzgUBvxaMLwMhVSLgqJn3npmxoTo6nzMNQPAnwtHF3s"
+        },
+        {
+          "name": "receipt",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  99,
+                  101,
+                  105,
+                  112,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "payment_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "payment_id",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "refund_stable",
+      "discriminator": [
+        205,
+        70,
+        224,
+        62,
+        43,
+        101,
+        112,
+        107
+      ],
+      "accounts": [
+        {
+          "name": "merchant",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "customer",
+          "writable": true
+        },
+        {
+          "name": "merchant_stable",
+          "writable": true
+        },
+        {
+          "name": "customer_stable",
+          "writable": true
+        },
+        {
+          "name": "stable_mint",
+          "address": "CZzgUBvxaMLwMhVSLgqJn3npmxoTo6nzMNQPAnwtHF3s"
+        },
+        {
+          "name": "receipt",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "refund_amount",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -120,6 +262,26 @@
       "code": 6001,
       "name": "InvalidFeeWallet",
       "msg": "Invalid fee wallet address"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidMint",
+      "msg": "Invalid stablecoin mint address"
+    },
+    {
+      "code": 6003,
+      "name": "UnauthorizedRefund",
+      "msg": "Unauthorized refund attempt"
+    },
+    {
+      "code": 6004,
+      "name": "RefundExceedsAmount",
+      "msg": "Refund amount exceeds net captured amount"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidCustomer",
+      "msg": "Invalid customer account"
     }
   ],
   "types": [
@@ -146,7 +308,23 @@
             "type": "pubkey"
           },
           {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
             "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "type": "u64"
+          },
+          {
+            "name": "net_amount",
             "type": "u64"
           },
           {
@@ -170,7 +348,27 @@
             "type": "pubkey"
           },
           {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
             "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "type": "u64"
+          },
+          {
+            "name": "net_amount",
+            "type": "u64"
+          },
+          {
+            "name": "refunded_amount",
             "type": "u64"
           },
           {

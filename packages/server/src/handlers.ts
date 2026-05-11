@@ -1,7 +1,8 @@
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import {
   createPayTransaction,
-  createPayUsdcTransaction,
+  createPayStableTransaction,
+  createRefundStableTransaction,
   deriveReceiptPda,
 } from "@slik-pay/sdk";
 import { eq } from "drizzle-orm";
@@ -18,6 +19,8 @@ import {
 } from "./storage";
 import type { Db } from "./db";
 import { schema } from "./db";
+import nacl from "tweetnacl";
+import bs58 from "bs58";
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -41,6 +44,29 @@ export interface HandlerContext {
   store: Store;
   connection: Connection;
   db?: Db; // Optional - if not set, merchant features disabled
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function verifySignature(message: string, signature: string, publicKeyStr: string) {
+  try {
+    const pubKey = new PublicKey(publicKeyStr);
+    const signatureBytes = bs58.decode(signature);
+    const messageBytes = new TextEncoder().encode(message);
+    if (!nacl.sign.detached.verify(messageBytes, signatureBytes, pubKey.toBytes())) {
+      throw new SlikError("Invalid merchant signature", 401);
+    }
+  } catch (err) {
+    throw new SlikError("Invalid merchant signature or format", 401);
+  }
+}
+
+async function dispatchWebhook(ctx: HandlerContext, eventType: string, payload: any) {
+  // Mock webhook dispatcher for the demo. In a real system, you'd queue this to Redis/SQS
+  console.log(`[Webhook Dispatch] ${eventType}:`, JSON.stringify(payload));
+  // If we had a db, we'd update webhook_delivery_status
 }
 
 // ---------------------------------------------------------------------------
@@ -145,38 +171,26 @@ export async function handleResolveCode(
 // POST /payments/create
 // ---------------------------------------------------------------------------
 
-/**
- * Create a new payment request.
- *
- * **`amount` MUST be denominated in SOL** (not lamports, not fiat) **or USDC**
- * (human-readable, e.g. 25.00) depending on the `currency` field.
- * The frontend is responsible for converting fiat to SOL/USDC before calling
- * this endpoint. The stored amount is passed directly to the on-chain
- * transfer instruction.
- */
 export async function handleCreatePayment(
   ctx: HandlerContext,
-  input: { amount: number; merchantWallet: string; currency?: "SOL" | "USDC" }
+  input: { amount: number; merchantWallet: string; currency?: "SOL" | "USDC" | "PUSD", signature?: string }
 ): Promise<{ paymentId: string; status: string }> {
-  const { amount, merchantWallet, currency = "SOL" } = input;
+  const { amount, merchantWallet, currency = "SOL", signature } = input;
 
-  if (currency !== "SOL" && currency !== "USDC") {
-    throw new SlikError("Invalid currency. Must be SOL or USDC.", 400);
+  if (currency !== "SOL" && currency !== "USDC" && currency !== "PUSD") {
+    throw new SlikError("Invalid currency. Must be SOL, USDC, or PUSD.", 400);
   }
 
   if (typeof amount !== "number" || amount <= 0) {
     throw new SlikError("Invalid amount. Must be a positive number.", 400);
   }
 
-  if (currency === "USDC") {
+  if (currency === "USDC" || currency === "PUSD") {
     if (amount < 0.01) {
-      throw new SlikError("Amount too small. Minimum is 0.01 USDC.", 400);
+      throw new SlikError(`Amount too small. Minimum is 0.01 ${currency}.`, 400);
     }
-    if (amount > 10000) {
-      throw new SlikError(
-        "Amount exceeds maximum allowed (10,000 USDC).",
-        400
-      );
+    if (amount > 100000) {
+      throw new SlikError(`Amount exceeds maximum allowed (100,000 ${currency}).`, 400);
     }
   } else {
     if (amount < 0.001) {
@@ -197,6 +211,11 @@ export async function handleCreatePayment(
     throw new SlikError("Invalid merchant wallet address.", 400);
   }
 
+  if (!signature) {
+    throw new SlikError("Missing authentication signature.", 401);
+  }
+  verifySignature(`create:${amount}:${currency}`, signature, merchantWallet);
+
   const paymentId = await createPayment(
     ctx.store,
     amount,
@@ -213,7 +232,7 @@ export async function handleCreatePayment(
 
 export async function handleLinkPayment(
   ctx: HandlerContext,
-  input: { paymentId: string; code: string }
+  input: { paymentId: string; code: string; signature?: string; merchantWallet: string }
 ): Promise<{
   matched: boolean;
   amount: number;
@@ -223,7 +242,7 @@ export async function handleLinkPayment(
   merchantName?: string;
   merchantLogo?: string | null;
 }> {
-  const { paymentId, code } = input;
+  const { paymentId, code, signature, merchantWallet } = input;
 
   if (!paymentId || typeof paymentId !== "string") {
     throw new SlikError("Missing or invalid paymentId.", 400);
@@ -233,6 +252,11 @@ export async function handleLinkPayment(
     throw new SlikError("Invalid code. Must be a 6-digit number.", 400);
   }
 
+  if (!signature) {
+    throw new SlikError("Missing authentication signature.", 401);
+  }
+  verifySignature(`link:${paymentId}:${code}`, signature, merchantWallet);
+
   const codeData = await resolveCode(ctx.store, code);
   if (!codeData) {
     throw new SlikError("Code not found or expired.", 404);
@@ -241,6 +265,10 @@ export async function handleLinkPayment(
   const payment = await getPayment(ctx.store, paymentId);
   if (!payment) {
     throw new SlikError("Payment not found or expired.", 404);
+  }
+
+  if (payment.merchantWallet !== merchantWallet) {
+    throw new SlikError("Payment does not belong to this merchant.", 403);
   }
 
   // Fast-fail status check before PDA derivation
@@ -320,6 +348,7 @@ export async function handlePaymentStatus(
       if (receiptAccount && receiptAccount.data.length > 0) {
         await updatePayment(ctx.store, paymentId, { status: "paid" });
         payment.status = "paid";
+        await dispatchWebhook(ctx, "payment.confirmed", { paymentId, status: "paid" });
       }
     } catch {
       // ignore - return current status
@@ -377,11 +406,11 @@ export async function handlePay(
   let transaction: Transaction;
   let receiptPda: PublicKey;
 
-  if (payment.currency === "USDC") {
-    const result = await createPayUsdcTransaction({
+  if (payment.currency === "USDC" || payment.currency === "PUSD") {
+    const result = await createPayStableTransaction({
       customer: senderPubkey,
       merchant: merchantPubkey,
-      amountUsdc: payment.amount,
+      amountStable: payment.amount,
       paymentId,
       connection: ctx.connection,
     });
@@ -416,6 +445,60 @@ export async function handlePay(
     transaction: serialized,
     message: `Pay ${payment.amount} ${payment.currency ?? "SOL"} via SLIK`,
     receiptPda: receiptPdaBase58,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// POST /refunds/create
+// ---------------------------------------------------------------------------
+
+export async function handleRefundPayment(
+  ctx: HandlerContext,
+  input: { paymentId: string; refundAmount: number; signature: string; merchantWallet: string }
+): Promise<{ transaction: string; receiptPda: string }> {
+  const { paymentId, refundAmount, signature, merchantWallet } = input;
+
+  if (!paymentId) throw new SlikError("Missing paymentId.", 400);
+  if (!refundAmount || refundAmount <= 0) throw new SlikError("Invalid refund amount.", 400);
+  if (!signature) throw new SlikError("Missing authentication signature.", 401);
+
+  verifySignature(`refund:${paymentId}:${refundAmount}`, signature, merchantWallet);
+
+  const payment = await getPayment(ctx.store, paymentId);
+  if (!payment) throw new SlikError("Payment not found.", 404);
+  if (payment.merchantWallet !== merchantWallet) throw new SlikError("Unauthorized", 403);
+  if (payment.status !== "paid" && payment.status !== "partially_refunded") {
+    throw new SlikError("Payment must be paid to be refunded.", 409);
+  }
+
+  // Only stablecoins support refunds via Anchor right now in v1
+  if (payment.currency !== "USDC" && payment.currency !== "PUSD") {
+    throw new SlikError("Refunds are only supported for stablecoin payments currently.", 400);
+  }
+
+  const result = await createRefundStableTransaction({
+    merchant: new PublicKey(merchantWallet),
+    customer: new PublicKey(payment.walletPubkey!),
+    refundAmountStable: refundAmount,
+    paymentId,
+    connection: ctx.connection,
+  });
+
+  const serialized = Buffer.from(
+    result.transaction.serialize({ requireAllSignatures: false })
+  ).toString("base64");
+
+  // Optimistically mark as refunded/partially_refunded
+  // In a robust system, we would track this in the DB and wait for confirmation via a webhook.
+  if (ctx.db) {
+    // Implement refund tracking in DB here
+  }
+
+  await dispatchWebhook(ctx, "payment.refund_requested", { paymentId, refundAmount });
+
+  return {
+    transaction: serialized,
+    receiptPda: result.receiptPda.toBase58(),
   };
 }
 

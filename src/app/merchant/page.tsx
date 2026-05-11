@@ -3,37 +3,29 @@
 import { useState, useCallback, useRef } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { useMerchantPayment } from "@slik-pay/sdk/react";
-import AmountInput from "@/components/AmountInput";
 import CodeInput from "@/components/CodeInput";
 import { WalletButton } from "@/components/WalletButton";
 import { Nav } from "@/components/Nav";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import bs58 from "bs58";
 
 type StatusColor = "green" | "yellow" | "red" | "idle";
 
-// ---------------------------------------------------------------------------
-// Merchant terminal
-// ---------------------------------------------------------------------------
+const PERFUME_PRICE_PUSD = 25.00;
+const PERFUME_PRICE_SOL = 0.15; // fallback fallback
 
-export default function MerchantTerminal() {
-  const { publicKey, connected } = useWallet();
+export default function PerfumePOS() {
+  const { publicKey, connected, signMessage } = useWallet();
   const { connection } = useConnection();
 
-  const { status, amount, error, createPayment, linkCode, reset } =
+  const { status, amount, paymentId, error, createPayment, linkCode, reset } =
     useMerchantPayment({ apiBaseUrl: "/api", connection });
 
-  // Local state not tracked by the hook
-  const [fiatLabel, setFiatLabel] = useState<string | undefined>();
   const [enteredCode, setEnteredCode] = useState<string>("");
   const [transitioning, setTransitioning] = useState(false);
   const prevStatusRef = useRef(status);
 
-  // ----------------------------------
-  // Smooth transition wrapper
-  // ----------------------------------
+  const [selectedCurrency, setSelectedCurrency] = useState<"PUSD" | "SOL">("PUSD");
+
   const withTransition = useCallback((fn: () => void) => {
     setTransitioning(true);
     setTimeout(() => {
@@ -42,7 +34,6 @@ export default function MerchantTerminal() {
     }, 180);
   }, []);
 
-  // Detect status changes from the hook and animate them
   if (prevStatusRef.current !== status) {
     prevStatusRef.current = status;
     if (!transitioning) {
@@ -51,40 +42,45 @@ export default function MerchantTerminal() {
     }
   }
 
-  // ----------------------------------
-  // Handlers
-  // ----------------------------------
-  const handleAmountSubmit = useCallback(
-    (amt: number, label?: string, currency?: "SOL" | "USDC") => {
-      if (!publicKey) return;
-      setFiatLabel(label);
-      createPayment(amt, publicKey.toBase58(), currency);
-    },
-    [publicKey, createPayment]
-  );
+  const handleCharge = useCallback(async () => {
+    if (!publicKey || !signMessage) return;
+    try {
+      const amt = selectedCurrency === "PUSD" ? PERFUME_PRICE_PUSD : PERFUME_PRICE_SOL;
+      const message = new TextEncoder().encode(`create:${amt}:${selectedCurrency}`);
+      const signature = await signMessage(message);
+      const b58Signature = bs58.encode(signature);
+      
+      await createPayment(amt, publicKey.toBase58(), selectedCurrency, b58Signature);
+    } catch (err) {
+      console.error("Signature failed", err);
+    }
+  }, [publicKey, signMessage, selectedCurrency, createPayment]);
 
   const handleCodeComplete = useCallback(
-    (code: string) => {
+    async (code: string) => {
       setEnteredCode(code);
-      linkCode(code);
+      if (!publicKey || !signMessage || !paymentId) return;
+      try {
+        const message = new TextEncoder().encode(`link:${paymentId}:${code}`);
+        const signature = await signMessage(message);
+        const b58Signature = bs58.encode(signature);
+        await linkCode(code, b58Signature, publicKey.toBase58());
+      } catch (err) {
+        console.error("Signature failed", err);
+      }
     },
-    [linkCode]
+    [linkCode, publicKey, signMessage, paymentId]
   );
 
   const handleReset = useCallback(() => {
     withTransition(() => {
       reset();
-      setFiatLabel(undefined);
       setEnteredCode("");
     });
   }, [reset, withTransition]);
 
-  // ----------------------------------
-  // Status bar
-  // ----------------------------------
   const statusInfo = getStatusInfo(status);
 
-  // Determine which "step" to render based on hook status
   const isIdle = status === "idle";
   const isAwaitingCode = status === "awaiting_code";
   const isConfirming = status === "confirming" || status === "linked";
@@ -93,172 +89,124 @@ export default function MerchantTerminal() {
 
   return (
     <>
-    <Nav />
-    <div
-      className="relative z-10 flex flex-col min-h-dvh w-full items-center"
-      style={{ backgroundColor: "var(--bg-base)", paddingTop: 68 }}
-    >
-      {/* Header bar */}
-      <header
-        className="w-full max-w-[420px] flex items-center justify-between px-5 pt-6 pb-3"
-        style={{ animation: "fade-in-up 0.3s ease-out both" }}
-      >
-        <div className="flex items-center gap-2.5">
-          {/* Logo */}
-          <img src="/logo/logo-192.png" alt="SLIK" style={{ height: 44 }} />
-        </div>
+      <Nav />
+      <div className="relative z-10 flex flex-col min-h-dvh w-full items-center bg-zinc-950 text-white font-sans" style={{ paddingTop: 68 }}>
+        
+        {/* Ambient Glow */}
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-purple-600/20 rounded-full blur-[120px] pointer-events-none" />
 
-        {/* Status pill */}
-        <div className="flex items-center gap-2">
-          <div
-            className="w-2 h-2 rounded-full"
-            style={{
-              backgroundColor: STATUS_COLORS[statusInfo.color],
-              animation:
-                statusInfo.color !== "idle"
-                  ? "status-blink 1.5s ease-in-out infinite"
-                  : "none",
-            }}
-          />
-          <span
-            className="text-xs tracking-wide"
-            style={{
-              fontFamily: "var(--font-code)",
-              color: "var(--text-muted)",
-            }}
-          >
-            {statusInfo.label}
-          </span>
-        </div>
-      </header>
-
-      {/* Top divider */}
-      <div
-        className="w-full max-w-[420px] h-px"
-        style={{
-          background:
-            "linear-gradient(90deg, transparent, var(--border), transparent)",
-        }}
-      />
-
-      {/* Main content area */}
-      <main
-        className="flex-1 flex flex-col items-center justify-center w-full max-w-[420px] px-5 py-8"
-        style={{
-          opacity: transitioning ? 0 : 1,
-          transform: transitioning
-            ? "translateY(-8px)"
-            : "translateY(0)",
-          transition:
-            "opacity 0.16s ease, transform 0.16s ease",
-        }}
-      >
-        {isIdle && !connected && (
-          <div
-            className="flex flex-col items-center gap-6 w-full"
-            style={{ animation: "fade-in-up 0.35s ease-out both" }}
-          >
-            <div
-              className="flex items-center justify-center rounded-full"
-              style={{
-                width: 64,
-                height: 64,
-                background: "rgba(99, 91, 255, 0.06)",
-                border: "1px solid rgba(99, 91, 255, 0.15)",
-              }}
-            >
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                <path d="M21 12V7H5a2 2 0 010-4h14v4" stroke="var(--primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M3 5v14a2 2 0 002 2h16v-5" stroke="var(--primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M18 12a1 1 0 100 4h4v-4h-4z" stroke="var(--primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <p
-                className="text-sm font-medium"
-                style={{ color: "var(--text)", fontFamily: "var(--font-code)" }}
-              >
-                Connect your wallet to receive payments
-              </p>
-              <p
-                className="text-xs text-center"
-                style={{ color: "var(--text-muted)", maxWidth: 280 }}
-              >
-                Your wallet address will be used as the destination for customer payments.
-              </p>
-            </div>
-            <WalletButton />
+        <header className="w-full max-w-[420px] flex items-center justify-between px-5 pt-6 pb-3 z-10">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-medium tracking-wide">Aura Boutique</h1>
           </div>
-        )}
-
-        {isIdle && connected && (
-          <div className="flex flex-col items-center gap-4 w-full">
+          <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-full border border-white/10">
             <div
-              className="flex items-center gap-2 px-3 py-2 rounded-lg"
+              className="w-2 h-2 rounded-full"
               style={{
-                background: "var(--bg-card)",
-                border: "1px solid var(--border)",
-                fontFamily: "var(--font-code)",
+                backgroundColor: STATUS_COLORS[statusInfo.color],
+                boxShadow: `0 0 10px ${STATUS_COLORS[statusInfo.color]}80`,
+                animation: statusInfo.color !== "idle" ? "pulse 2s infinite" : "none",
               }}
-            >
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: "var(--green)" }} />
-              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                {publicKey?.toBase58().slice(0, 4)}...{publicKey?.toBase58().slice(-4)}
-              </span>
-            </div>
-            <AmountInput onSubmit={handleAmountSubmit} />
+            />
+            <span className="text-xs tracking-wide text-zinc-400 font-mono">
+              POS: {statusInfo.label}
+            </span>
           </div>
-        )}
+        </header>
 
-        {isAwaitingCode && amount !== null && (
-          <CodeStep
-            amount={amount}
-            fiatLabel={fiatLabel}
-            onCodeComplete={handleCodeComplete}
-            onCancel={handleReset}
-          />
-        )}
-
-        {isConfirming && amount !== null && (
-          <WaitingStep amount={amount} code={enteredCode} fiatLabel={fiatLabel} />
-        )}
-
-        {isPaid && amount !== null && (
-          <SuccessStep
-            amount={amount}
-            fiatLabel={fiatLabel}
-            onReset={handleReset}
-          />
-        )}
-
-        {isError && (
-          <ErrorStep
-            message={error || (status === "expired" ? "Payment expired." : "An error occurred")}
-            onRetry={handleReset}
-          />
-        )}
-      </main>
-
-      {/* Footer */}
-      <footer className="w-full max-w-[420px] px-5 pb-6 pt-2">
-        <div
-          className="h-px w-full mb-3"
+        <main className="flex-1 flex flex-col items-center justify-center w-full max-w-[420px] px-5 py-8 z-10"
           style={{
-            background:
-              "linear-gradient(90deg, transparent, var(--border), transparent)",
-          }}
-        />
-        <p
-          className="text-center text-xs"
-          style={{
-            fontFamily: "var(--font-code)",
-            color: "var(--text-muted)",
+            opacity: transitioning ? 0 : 1,
+            transform: transitioning ? "translateY(8px)" : "translateY(0)",
+            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
           }}
         >
-          Merchant terminal v0.1
-        </p>
-      </footer>
-    </div>
+          {isIdle && !connected && (
+            <div className="flex flex-col items-center gap-6 w-full p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-md">
+              <div className="w-16 h-16 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-purple-400">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <div className="text-center">
+                <h2 className="text-lg font-medium mb-2">Connect Terminal</h2>
+                <p className="text-sm text-zinc-400">Authenticate merchant wallet to accept Palm USD payments.</p>
+              </div>
+              <WalletButton />
+            </div>
+          )}
+
+          {isIdle && connected && (
+            <div className="w-full flex flex-col gap-6">
+              {/* Product Card */}
+              <div className="p-1 rounded-3xl bg-gradient-to-b from-white/10 to-transparent">
+                <div className="flex flex-col items-center gap-6 p-8 rounded-[22px] bg-zinc-900 border border-white/5">
+                  <div className="w-32 h-40 bg-zinc-800 rounded-xl flex items-center justify-center border border-white/10 overflow-hidden relative group">
+                    <div className="absolute inset-0 bg-gradient-to-tr from-purple-500/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                    <img src="/perfume-bottle.png" alt="L'Essence Sample" className="object-cover w-full h-full z-10 transition-transform duration-500 group-hover:scale-105" />
+                  </div>
+                  <div className="text-center">
+                    <h2 className="text-xl font-semibold tracking-wide">L'Essence Sample</h2>
+                    <p className="text-zinc-400 mt-1">35ml Signature Collection</p>
+                  </div>
+
+                  <div className="w-full h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+                  <div className="w-full flex justify-between items-center bg-black/40 p-1.5 rounded-xl border border-white/5">
+                    <button 
+                      onClick={() => setSelectedCurrency("PUSD")}
+                      className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${selectedCurrency === 'PUSD' ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/20' : 'text-zinc-400 hover:text-white'}`}
+                    >
+                      $25.00 PUSD
+                    </button>
+                    <button 
+                      onClick={() => setSelectedCurrency("SOL")}
+                      className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${selectedCurrency === 'SOL' ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/20' : 'text-zinc-400 hover:text-white'}`}
+                    >
+                      {PERFUME_PRICE_SOL} SOL
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={handleCharge}
+                    className="w-full py-4 rounded-xl bg-white text-black font-semibold text-lg hover:bg-zinc-200 transition-colors duration-200 shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
+                  >
+                    Charge {selectedCurrency === "PUSD" ? "$25.00" : `${PERFUME_PRICE_SOL} SOL`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isAwaitingCode && amount !== null && (
+            <CodeStep
+              amount={amount}
+              currency={selectedCurrency}
+              onCodeComplete={handleCodeComplete}
+              onCancel={handleReset}
+            />
+          )}
+
+          {isConfirming && amount !== null && (
+            <WaitingStep amount={amount} currency={selectedCurrency} code={enteredCode} />
+          )}
+
+          {isPaid && amount !== null && (
+            <SuccessStep
+              amount={amount}
+              currency={selectedCurrency}
+              onReset={handleReset}
+            />
+          )}
+
+          {isError && (
+            <ErrorStep
+              message={error || (status === "expired" ? "Payment expired." : "An error occurred")}
+              onRetry={handleReset}
+            />
+          )}
+        </main>
+      </div>
     </>
   );
 }
@@ -267,453 +215,125 @@ export default function MerchantTerminal() {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function CodeStep({
-  amount,
-  fiatLabel,
-  onCodeComplete,
-  onCancel,
-}: {
-  amount: number;
-  fiatLabel?: string;
-  onCodeComplete: (code: string) => void;
-  onCancel: () => void;
-}) {
+function CodeStep({ amount, currency, onCodeComplete, onCancel }: { amount: number; currency: string; onCodeComplete: (code: string) => void; onCancel: () => void; }) {
   return (
-    <div
-      className="flex flex-col items-center w-full gap-8"
-      style={{ animation: "fade-in-up 0.35s ease-out both" }}
-    >
-      {/* Amount badge */}
-      <div className="flex flex-col items-center gap-1">
-        <span
-          className="text-xs tracking-widest uppercase"
-          style={{
-            fontFamily: "var(--font-code)",
-            color: "var(--text-muted)",
-          }}
-        >
-          Payment amount
-        </span>
-        {fiatLabel && (
-          <span
-            className="text-2xl font-bold"
-            style={{ fontFamily: "var(--font-code)", color: "var(--text)" }}
-          >
-            {fiatLabel}
-          </span>
-        )}
-        <span
-          className={fiatLabel ? "text-sm" : "text-3xl font-bold"}
-          style={{
-            fontFamily: "var(--font-code)",
-            color: fiatLabel ? "var(--text-secondary)" : "var(--text)",
-          }}
-        >
-          {formatAmount(amount)}
-          <span
-            className="text-sm font-semibold ml-2"
-            style={{ color: "var(--primary)", opacity: 0.7 }}
-          >
-            SOL
-          </span>
+    <div className="flex flex-col items-center w-full gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col items-center gap-2 p-6 rounded-3xl bg-white/5 border border-white/10 w-full backdrop-blur-md">
+        <span className="text-xs tracking-widest uppercase text-purple-400 font-mono">Amount Due</span>
+        <span className="text-4xl font-light tracking-tight">
+          {currency === 'PUSD' ? '$' : ''}{amount.toFixed(2)} <span className="text-xl text-zinc-500 font-medium">{currency}</span>
         </span>
       </div>
 
-      {/* OTP input */}
-      <CodeInput onComplete={onCodeComplete} />
+      <div className="w-full max-w-[320px]">
+        <h3 className="text-center text-sm text-zinc-400 mb-6">Ask customer for their 6-digit Palm SLIK code</h3>
+        <CodeInput onComplete={onCodeComplete} />
+      </div>
 
-      {/* Cancel link */}
-      <button
-        type="button"
-        onClick={onCancel}
-        className="text-sm tracking-wide cursor-pointer bg-transparent border-none"
-        style={{
-          fontFamily: "var(--font-code)",
-          color: "var(--text-muted)",
-          opacity: 0.6,
-          transition: "opacity 0.2s ease",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.opacity = "1";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.opacity = "0.6";
-        }}
-      >
-        Cancel
+      <button onClick={onCancel} className="mt-4 text-sm text-zinc-500 hover:text-white transition-colors duration-200 uppercase tracking-widest font-mono">
+        Cancel Order
       </button>
     </div>
   );
 }
 
-function WaitingStep({
-  amount,
-  code,
-  fiatLabel,
-}: {
-  amount: number;
-  code: string;
-  fiatLabel?: string;
-}) {
+function WaitingStep({ amount, currency, code }: { amount: number; currency: string; code: string; }) {
   return (
-    <div
-      className="flex flex-col items-center w-full gap-8"
-      style={{ animation: "fade-in-up 0.35s ease-out both" }}
-    >
-      {/* Amount */}
-      <div className="flex flex-col items-center gap-1">
-        <span
-          className="text-xs tracking-widest uppercase"
-          style={{
-            fontFamily: "var(--font-code)",
-            color: "var(--text-muted)",
-          }}
-        >
-          Awaiting approval
-        </span>
-        {fiatLabel && (
-          <span
-            className="text-2xl font-bold"
-            style={{ fontFamily: "var(--font-code)", color: "var(--text)" }}
-          >
-            {fiatLabel}
-          </span>
-        )}
-        <span
-          className={fiatLabel ? "text-sm" : "text-3xl font-bold"}
-          style={{
-            fontFamily: "var(--font-code)",
-            color: fiatLabel ? "var(--text-secondary)" : "var(--text)",
-          }}
-        >
-          {formatAmount(amount)}
-          <span
-            className="text-sm font-semibold ml-2"
-            style={{ color: "var(--primary)", opacity: 0.7 }}
-          >
-            SOL
-          </span>
+    <div className="flex flex-col items-center w-full gap-8 animate-in fade-in zoom-in-95 duration-500">
+      <div className="flex flex-col items-center gap-2">
+        <span className="text-xs tracking-widest uppercase text-yellow-500 font-mono animate-pulse">Awaiting Customer Approval</span>
+        <span className="text-3xl font-light">
+          {currency === 'PUSD' ? '$' : ''}{amount.toFixed(2)} <span className="text-lg text-zinc-500">{currency}</span>
         </span>
       </div>
 
-      {/* Locked code display */}
-      <div className="flex gap-2.5 justify-center">
+      <div className="flex gap-3 justify-center">
         {code.split("").map((digit, i) => (
           <div
             key={i}
-            className="w-12 h-16 flex items-center justify-center text-2xl font-bold"
-            style={{
-              fontFamily: "var(--font-code)",
-              borderRadius: "var(--radius-digit)",
-              backgroundColor: "var(--bg-card)",
-              color: "var(--primary)",
-              border: "2px solid var(--primary)",
-              opacity: 0.55,
-            }}
+            className="w-12 h-14 flex items-center justify-center text-xl font-medium rounded-xl bg-white/5 border border-white/10 text-white opacity-60"
           >
             {digit}
           </div>
         ))}
       </div>
 
-      {/* Pulsing dots */}
-      <div className="flex items-center gap-3 mt-2">
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="w-2.5 h-2.5 rounded-full"
-            style={{
-              backgroundColor: "var(--warning)",
-              animation: `pulse-dot 1.4s ease-in-out ${i * 0.2}s infinite`,
-            }}
-          />
-        ))}
-      </div>
-
-      <p
-        className="text-sm text-center leading-relaxed"
-        style={{
-          fontFamily: "var(--font-code)",
-          color: "var(--text-secondary)",
-        }}
-      >
-        Waiting for the customer to confirm
-        <br />
-        payment in their wallet...
+      <p className="text-sm text-center text-zinc-400 max-w-[260px] leading-relaxed">
+        Customer is confirming the transaction in their wallet app.
       </p>
     </div>
   );
 }
 
-function SuccessStep({
-  amount,
-  fiatLabel,
-  onReset,
-}: {
-  amount: number;
-  fiatLabel?: string;
-  onReset: () => void;
-}) {
+function SuccessStep({ amount, currency, onReset }: { amount: number; currency: string; onReset: () => void; }) {
   return (
-    <div
-      className="flex flex-col items-center w-full gap-6"
-      style={{ animation: "fade-in-up 0.4s ease-out both" }}
-    >
-      {/* Checkmark with ripple */}
+    <div className="flex flex-col items-center w-full gap-8 animate-in fade-in zoom-in duration-500">
       <div className="relative flex items-center justify-center">
-        {/* Ripple rings */}
-        <div
-          className="absolute w-20 h-20 rounded-full"
-          style={{
-            border: "2px solid var(--green)",
-            animation: "ripple-expand 1.5s ease-out 0.3s forwards",
-            opacity: 0,
-          }}
-        />
-        <div
-          className="absolute w-20 h-20 rounded-full"
-          style={{
-            border: "2px solid var(--green)",
-            animation: "ripple-expand 1.5s ease-out 0.6s forwards",
-            opacity: 0,
-          }}
-        />
-
-        {/* Green circle */}
-        <div
-          className="w-20 h-20 rounded-full flex items-center justify-center"
-          style={{
-            background:
-              "linear-gradient(135deg, var(--green), #28a058)",
-          }}
-        >
-          <svg
-            width="40"
-            height="40"
-            viewBox="0 0 40 40"
-            fill="none"
-          >
-            <path
-              d="M10 20L17 27L30 13"
-              stroke="#ffffff"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeDasharray="48"
-              strokeDashoffset="48"
-              style={{
-                animation:
-                  "draw-check 0.5s ease-out 0.3s forwards",
-              }}
-            />
+        <div className="absolute w-24 h-24 rounded-full border border-green-500/50 animate-[ping_2s_cubic-bezier(0,0,0.2,1)_infinite]" />
+        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center shadow-[0_0_30px_rgba(74,222,128,0.3)] z-10">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" className="animate-[bounce_0.5s_ease-out]">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
           </svg>
         </div>
       </div>
 
-      {/* Confirmation text */}
-      <div className="flex flex-col items-center gap-1 mt-2">
-        <span
-          className="text-xs tracking-widest uppercase"
-          style={{
-            fontFamily: "var(--font-code)",
-            color: "var(--green)",
-          }}
-        >
-          Payment confirmed
-        </span>
-        {fiatLabel && (
-          <span
-            className="text-4xl font-bold"
-            style={{ fontFamily: "var(--font-code)", color: "var(--text)" }}
-          >
-            {fiatLabel}
-          </span>
-        )}
-        <span
-          className={fiatLabel ? "text-base" : "text-4xl font-bold"}
-          style={{
-            fontFamily: "var(--font-code)",
-            color: fiatLabel ? "var(--text-secondary)" : "var(--text)",
-          }}
-        >
-          {formatAmount(amount)}
-          <span
-            className="text-base font-semibold ml-2"
-            style={{ color: "var(--primary)", opacity: 0.7 }}
-          >
-            SOL
-          </span>
+      <div className="flex flex-col items-center gap-2">
+        <span className="text-xs tracking-widest uppercase text-green-400 font-mono">Payment Successful</span>
+        <span className="text-4xl font-light">
+          {currency === 'PUSD' ? '$' : ''}{amount.toFixed(2)} <span className="text-xl text-zinc-500">{currency}</span>
         </span>
       </div>
 
-      {/* New payment */}
       <button
-        type="button"
         onClick={onReset}
-        className="w-full max-w-[320px] mt-4 h-14 font-semibold text-base tracking-wide uppercase cursor-pointer select-none"
-        style={{
-          fontFamily: "var(--font-code)",
-          borderRadius: "var(--radius-btn)",
-          backgroundColor: "var(--bg-card)",
-          color: "var(--text)",
-          border: "1px solid var(--border)",
-          transition: "background-color var(--transition)",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.backgroundColor =
-            "var(--bg-card-hover)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.backgroundColor =
-            "var(--bg-card)";
-        }}
+        className="w-full mt-4 py-4 rounded-xl bg-white/10 text-white font-medium hover:bg-white/20 border border-white/10 transition-all duration-200"
       >
-        New payment
+        New Transaction
       </button>
     </div>
   );
 }
 
-function ErrorStep({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
+function ErrorStep({ message, onRetry }: { message: string; onRetry: () => void; }) {
   return (
-    <div
-      className="flex flex-col items-center w-full gap-6"
-      style={{ animation: "fade-in-up 0.35s ease-out both" }}
-    >
-      {/* Error icon */}
-      <div
-        className="w-16 h-16 rounded-full flex items-center justify-center"
-        style={{
-          backgroundColor: "rgba(223, 27, 65, 0.06)",
-          border: "2px solid var(--error)",
-        }}
-      >
-        <svg
-          width="28"
-          height="28"
-          viewBox="0 0 24 24"
-          fill="none"
-        >
-          <line
-            x1="18"
-            y1="6"
-            x2="6"
-            y2="18"
-            stroke="var(--error)"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-          />
-          <line
-            x1="6"
-            y1="6"
-            x2="18"
-            y2="18"
-            stroke="var(--error)"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-          />
+    <div className="flex flex-col items-center w-full gap-8 animate-in fade-in duration-300">
+      <div className="w-20 h-20 rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-red-400">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
         </svg>
       </div>
 
-      {/* Error text */}
-      <div className="flex flex-col items-center gap-2">
-        <span
-          className="text-xs tracking-widest uppercase"
-          style={{
-            fontFamily: "var(--font-code)",
-            color: "var(--error)",
-          }}
-        >
-          Error
-        </span>
-        <p
-          className="text-sm text-center leading-relaxed max-w-[280px]"
-          style={{
-            fontFamily: "var(--font-code)",
-            color: "var(--text-secondary)",
-          }}
-        >
-          {message}
-        </p>
+      <div className="flex flex-col items-center gap-2 text-center">
+        <span className="text-xs tracking-widest uppercase text-red-400 font-mono">Transaction Failed</span>
+        <p className="text-sm text-zinc-400 max-w-[280px]">{message}</p>
       </div>
 
-      {/* Retry */}
       <button
-        type="button"
         onClick={onRetry}
-        className="w-full max-w-[320px] mt-2 h-14 font-semibold text-base tracking-wide uppercase cursor-pointer select-none"
-        style={{
-          fontFamily: "var(--font-code)",
-          borderRadius: "var(--radius-btn)",
-          backgroundColor: "var(--bg-card)",
-          color: "var(--text)",
-          border: "1px solid var(--border)",
-          transition: "background-color var(--transition)",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.backgroundColor =
-            "var(--bg-card-hover)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.backgroundColor =
-            "var(--bg-card)";
-        }}
+        className="w-full py-4 rounded-xl bg-white/10 text-white font-medium hover:bg-white/20 border border-white/10 transition-all duration-200"
       >
-        Try again
+        Try Again
       </button>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const STATUS_COLORS: Record<StatusColor, string> = {
-  green: "#30b566",
-  yellow: "#e5960a",
-  red: "#df1b41",
-  idle: "#a3acb9",
+  green: "#4ade80",
+  yellow: "#eab308",
+  red: "#ef4444",
+  idle: "#52525b",
 };
 
-type MerchantStatus =
-  | "idle"
-  | "awaiting_code"
-  | "linked"
-  | "confirming"
-  | "paid"
-  | "expired"
-  | "error";
-
-function getStatusInfo(status: MerchantStatus): {
-  label: string;
-  color: StatusColor;
-} {
+function getStatusInfo(status: string): { label: string; color: StatusColor; } {
   switch (status) {
-    case "idle":
-      return { label: "Ready", color: "green" };
-    case "awaiting_code":
-      return { label: "Awaiting code", color: "yellow" };
+    case "idle": return { label: "Ready", color: "green" };
+    case "awaiting_code": return { label: "Waiting for code", color: "yellow" };
     case "linked":
-    case "confirming":
-      return { label: "Processing", color: "yellow" };
-    case "paid":
-      return { label: "Confirmed", color: "green" };
+    case "confirming": return { label: "Processing", color: "yellow" };
+    case "paid": return { label: "Confirmed", color: "green" };
     case "expired":
-    case "error":
-      return { label: "Error", color: "red" };
+    case "error": return { label: "Error", color: "red" };
+    default: return { label: "Unknown", color: "idle" };
   }
-}
-
-function formatAmount(amount: number): string {
-  return amount.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 }

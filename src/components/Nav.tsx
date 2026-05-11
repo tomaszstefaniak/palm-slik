@@ -65,7 +65,7 @@ export function Nav() {
               textDecoration: "none",
             }}
           >
-            <img src="/logo/logo-192.png" alt="SLIK" style={{ height: 48 }} />
+            <img src="/logo/logo-192.png" alt="Palm SLIK" style={{ height: 48 }} />
           </Link>
 
           {/* Desktop links */}

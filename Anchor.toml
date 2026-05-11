@@ -1,12 +1,10 @@
-[toolchain]
-anchor_version = "0.32.0"
 
 [features]
 seeds = true
 skip-lint = false
 
 [programs.devnet]
-slik = "AqdVcH7aYHXtWCQbkEweCDoXGR8qMn4pdKhWScbMcyNv"
+slik = "CogFZCvMEXKpvg2okzEUQMLAeTRqwdC9v7JXE8CHvzNP"
 
 [registry]
 url = "https://api.apr.dev"

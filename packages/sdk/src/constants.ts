@@ -1,7 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 
 export const PROGRAM_ID = new PublicKey(
-  "AqdVcH7aYHXtWCQbkEweCDoXGR8qMn4pdKhWScbMcyNv"
+  "CogFZCvMEXKpvg2okzEUQMLAeTRqwdC9v7JXE8CHvzNP"
 );
 
 export const FEE_WALLET = new PublicKey(
@@ -18,15 +18,21 @@ export const RECEIPT_DISCRIMINATOR = new Uint8Array([
   39, 154, 73, 106, 80, 102, 145, 153,
 ]);
 
-// ---- USDC support ----
+// ---- Stablecoin config ----
+export const STABLE_ASSET = {
+  symbol: "PUSD",
+  // Palm USD mainnet mint
+  mint: process.env.NEXT_PUBLIC_PALM_USD_MINT ? new PublicKey(process.env.NEXT_PUBLIC_PALM_USD_MINT) : new PublicKey("CZzgUBvxaMLwMhVSLgqJn3npmxoTo6nzMNQPAnwtHF3s"),
+  decimals: 6,
+  tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+} as const;
 
-// Devnet USDC. Change to EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v for mainnet.
-export const USDC_MINT = new PublicKey(
-  "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
-);
-export const USDC_DECIMALS = 6;
+// SHA256("global:pay_stable") first 8 bytes
+export const PAY_STABLE_DISCRIMINATOR = new Uint8Array([
+  102, 255, 123,  10, 231,  87, 103, 202
+]);
 
-// SHA256("global:pay_usdc") first 8 bytes
-export const PAY_USDC_DISCRIMINATOR = new Uint8Array([
-  24, 1, 58, 95, 8, 82, 131, 221,
+// SHA256("global:refund_stable") first 8 bytes
+export const REFUND_STABLE_DISCRIMINATOR = new Uint8Array([
+  205,  70, 224,  62,  43, 101, 112, 107
 ]);

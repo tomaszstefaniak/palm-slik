@@ -250,7 +250,7 @@ export async function createPayment(
   store: Store,
   amount: number,
   merchantWallet: string,
-  currency: "SOL" | "USDC" = "SOL"
+  currency: "SOL" | "USDC" | "PUSD" = "SOL"
 ): Promise<string> {
   const paymentId = crypto.randomUUID();
 

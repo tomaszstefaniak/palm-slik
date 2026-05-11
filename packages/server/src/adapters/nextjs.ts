@@ -345,6 +345,20 @@ export function createSlikRoutes(config: SlikRoutesConfig) {
           return Response.json(result, { status: 201 });
         }
 
+        // POST /refunds/create
+        if (path.endsWith("/refunds/create")) {
+          if (rateLimitEnabled) {
+            const blocked = await enforceRateLimit(
+              config.store,
+              request,
+              "refunds/create"
+            );
+            if (blocked) return blocked;
+          }
+          const result = await handlers.handleRefundPayment(ctx, body);
+          return Response.json(result);
+        }
+
         return Response.json({ error: "Not found" }, { status: 404 });
       } catch (err) {
         if (err instanceof SlikError) {

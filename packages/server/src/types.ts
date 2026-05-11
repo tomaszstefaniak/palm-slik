@@ -4,13 +4,16 @@ export interface CodeData {
   createdAt: number;
 }
 
-export type PaymentStatus = "awaiting_code" | "linked" | "paid" | "expired";
+export type PaymentStatus = "awaiting_code" | "linked" | "paid" | "expired" | "refunded" | "partially_refunded";
 
 export interface PaymentData {
-  /** Amount in SOL (not lamports, not fiat) or USDC (human-readable) */
+  /** Human-readable amount */
   amount: number;
   /** Payment currency. Default: "SOL" */
-  currency: "SOL" | "USDC";
+  currency: "SOL" | "USDC" | "PUSD";
+  assetSymbol?: string;
+  mint?: string;
+  decimals?: number;
   status: PaymentStatus;
   merchantWallet: string;
   code?: string;
