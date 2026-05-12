@@ -548,7 +548,7 @@ export default function LandingPage() {
               }}
             >
               <a
-                href="https://github.com/konradbachowski/slik"
+                href="https://github.com/tomaszstefaniak/palm-slik"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="gradient-btn"
@@ -684,7 +684,7 @@ export default function LandingPage() {
               { label: "Team", href: "/team" },
               {
                 label: "GitHub",
-                href: "https://github.com/konradbachowski/slik",
+                href: "https://github.com/tomaszstefaniak/palm-slik",
               },
             ].map((link) => (
               <Link

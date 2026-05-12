@@ -309,7 +309,7 @@ export default function VendorsPage() {
           </div>
 
           <a
-            href="https://github.com/konradbachowski/slik"
+            href="https://github.com/tomaszstefaniak/palm-slik"
             target="_blank"
             rel="noopener noreferrer"
             style={{

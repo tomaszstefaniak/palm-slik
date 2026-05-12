@@ -24,7 +24,7 @@ const team: TeamMember[] = [
     initials: "KB",
     open: false,
     links: [
-      { label: "GitHub", href: "https://github.com/konradbachowski" },
+      { label: "GitHub", href: "https://github.com/tomaszstefaniak" },
       { label: "LinkedIn", href: "#" },
     ],
   },
